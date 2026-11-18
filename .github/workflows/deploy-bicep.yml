@@ -1,0 +1,136 @@
+name: Deploy Bicep Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/deploy-bicep.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/deploy-bicep.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: bicep-dev-deployment
+  cancel-in-progress: false
+
+env:
+  TEMPLATE_FILE: infra/main.bicep
+  PARAMETERS_FILE: infra/main.dev.bicepparam
+  RESOURCE_GROUP_NAME: ${{ vars.AZURE_RESOURCE_GROUP }}
+
+jobs:
+  validate:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Display Bicep version
+        run: az bicep version
+
+      - name: Build Bicep template
+        run: |
+          az bicep build \
+            --file "${{ env.TEMPLATE_FILE }}" \
+            --stdout > /dev/null
+
+      - name: Lint Bicep template
+        run: |
+          az bicep lint \
+            --file "${{ env.TEMPLATE_FILE }}"
+
+      - name: Validate Azure deployment
+        run: |
+          az deployment group validate \
+            --resource-group "${{ env.RESOURCE_GROUP_NAME }}" \
+            --template-file "${{ env.TEMPLATE_FILE }}" \
+            --parameters "${{ env.PARAMETERS_FILE }}"
+
+  what-if:
+    name: Preview Azure Changes
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run What-If
+        run: |
+          az deployment group what-if \
+            --resource-group "${{ env.RESOURCE_GROUP_NAME }}" \
+            --template-file "${{ env.TEMPLATE_FILE }}" \
+            --parameters "${{ env.PARAMETERS_FILE }}"
+
+  deploy:
+    name: Deploy Azure Resources
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+      - what-if
+
+    # Do not deploy pull requests.
+    if: github.event_name != 'pull_request'
+
+    environment: development
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep template
+        id: deploy
+        run: |
+          DEPLOYMENT_NAME="sampleapp-dev-${GITHUB_RUN_NUMBER}"
+
+          az deployment group create \
+            --name "$DEPLOYMENT_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP_NAME }}" \
+            --template-file "${{ env.TEMPLATE_FILE }}" \
+            --parameters "${{ env.PARAMETERS_FILE }}" \
+            --output json
+
+      - name: Show deployment outputs
+        run: |
+          DEPLOYMENT_NAME="sampleapp-dev-${GITHUB_RUN_NUMBER}"
+
+          az deployment group show \
+            --name "$DEPLOYMENT_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP_NAME }}" \
+            --query properties.outputs \
+            --output json
