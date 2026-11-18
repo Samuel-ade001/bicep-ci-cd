@@ -23,7 +23,6 @@ parameters:
     default: sc-sampleapp-dev
 
 variables:
-  vmImageName: ubuntu-latest
   subscriptionId: "87f9d502-d8bd-4f58-be1a-32a365b439c9"
   resourceGroupName: rg-sampleapp-dev-eastus
   templateFile: "$(Build.SourcesDirectory)/infra/main.bicep"
@@ -36,7 +35,7 @@ stages:
       - job: ValidateBicep
         displayName: Validate Bicep configuration
         pool:
-          vmImage: $(vmImageName)
+          name: SelfHosted
 
         steps:
           - checkout: self
@@ -62,7 +61,7 @@ stages:
       - job: PreviewBicep
         displayName: Run Bicep What-If
         pool:
-          vmImage: $(vmImageName)
+          name: SelfHosted
 
         steps:
           - checkout: self
@@ -96,7 +95,7 @@ stages:
       - deployment: DeployBicep
         displayName: Deploy Bicep configuration
         pool:
-          vmImage: $(vmImageName)
+          name: SelfHosted
 
         environment: sampleapp-development
 
